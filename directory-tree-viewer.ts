@@ -12,10 +12,13 @@ const SYMBOLS: Symbols = {
   INDENT_EMPTY: '    ',
   EXPANDED: '[-]',
   COLLAPSED: '[+]',
-  SELECTED: '[✓]',
+  SELECTED: '[✓]',      // White checkmark (fully selected)
+  PARTIAL: '[▪]',       // Gray checkmark (partially selected)
   UNSELECTED: '[ ]'
 };
 
+// List of directories to ignore for better performance
+const IGNORE_DIRS = ['node_modules', '.git', 'dist', 'build', '.next', '.cache'];
 // Data structure for our directory tree
 class DirectoryNode {
   path: string;
@@ -24,6 +27,9 @@ class DirectoryNode {
   children: DirectoryNode[];
   expanded: boolean;
   selected: boolean;
+  partiallySelected: boolean;  // New property for partial selection state
+  childrenCount: number;      // Count of total children (for optimization)
+  fileCount: number;          // Count of files (for optimization)
 
   constructor(path: string, name: string, isDirectory = false) {
     this.path = path;
@@ -32,6 +38,9 @@ class DirectoryNode {
     this.children = [];
     this.expanded = false; // Start with collapsed directories
     this.selected = false;
+    this.partiallySelected = false;
+    this.childrenCount = 0;
+    this.fileCount = 0;
   }
 }
 
@@ -44,8 +53,9 @@ class InteractiveDirectoryTree {
   visibleNodes: DirectoryNode[];
   rl: any; // Using any for readline interface
   debug: boolean;
+  ignoreDirectories: string[];
 
-  constructor(rootPath: string) {
+  constructor(rootPath: string, ignoreDirectories: string[] = IGNORE_DIRS) {
     this.rootPath = resolve(rootPath);
     this.root = null;
     this.nodeMap = new Map(); // For fast access to nodes
@@ -58,6 +68,7 @@ class InteractiveDirectoryTree {
     
     // Debug mode (for development purposes)
     this.debug = false;
+    this.ignoreDirectories = ignoreDirectories;
     
     // Override readline's output to prevent it from messing with our display
     const originalWrite = process.stdout.write;
@@ -74,26 +85,46 @@ class InteractiveDirectoryTree {
     this.root = new DirectoryNode(this.rootPath, rootName, true);
     this.nodeMap.set(this.rootPath, this.root);
     
+    console.log("\x1b[33mScanning directory structure...\x1b[0m");
     await this.scanDirectory(this.root);
     this.updateVisibleNodes();
     
     return this;
   }
 
-  // Recursively scan directory
+  // Recursively scan directory with improved performance
   async scanDirectory(node: DirectoryNode): Promise<void> {
     try {
       const entries = await readdir(node.path);
       
+      // Check if this is a directory we should ignore
+      const dirName = node.name;
+      if (this.ignoreDirectories.includes(dirName)) {
+        // Mark as special directory - we'll handle it differently
+        node.childrenCount = 999; // Just mark it as having many children
+        node.fileCount = 0;
+        return;
+      }
+      
       // Sort: directories first, then files
       const sorted = await Promise.all(entries.map(async entry => {
         const fullPath = join(node.path, entry);
-        const stats = await stat(fullPath);
-        return { 
-          name: entry, 
-          path: fullPath, 
-          isDirectory: stats.isDirectory() 
-        };
+        try {
+          const stats = await stat(fullPath);
+          return { 
+            name: entry, 
+            path: fullPath, 
+            isDirectory: stats.isDirectory() 
+          };
+        } catch (error) {
+          // Handle permission errors or other issues
+          return { 
+            name: entry, 
+            path: fullPath, 
+            isDirectory: false,
+            error: true 
+          };
+        }
       }));
       
       sorted.sort((a, b) => {
@@ -103,48 +134,88 @@ class InteractiveDirectoryTree {
       });
       
       // Create nodes and continue recursively for directories
+      let fileCount = 0;
+      let totalChildren = 0;
+      
       for (const entry of sorted) {
+        // Skip entries with errors
+        if ('error' in entry && entry.error) continue;
+        
         const childNode = new DirectoryNode(entry.path, entry.name, entry.isDirectory);
         node.children.push(childNode);
         this.nodeMap.set(entry.path, childNode);
+        totalChildren++;
         
-        if (entry.isDirectory) {
+        if (!entry.isDirectory) {
+          fileCount++;
+        } else {
           await this.scanDirectory(childNode);
+          // Accumulate counts from subdirectories
+          fileCount += childNode.fileCount;
+          totalChildren += childNode.childrenCount;
         }
       }
+      
+      // Update counts for this node
+      node.fileCount = fileCount;
+      node.childrenCount = totalChildren;
+      
     } catch (error) {
       const err = error as Error;
       console.error(`Error scanning ${node.path}:`, err.message);
     }
   }
 
-  // Update the list of currently visible nodes
+  // Update the list of currently visible nodes - with performance optimizations
   updateVisibleNodes(): void {
     // Save reference to current node
     const currentNodePath = this.visibleNodes.length > 0 && this.cursorPosition < this.visibleNodes.length
       ? this.visibleNodes[this.cursorPosition].path
       : null;
     
-    if (this.debug) {
-      console.log(`DEBUG: Current cursor: ${this.cursorPosition}, Current node: ${currentNodePath}`);
-    }
-    
-    // Build new list of visible nodes
+    // Build new list of visible nodes - more efficiently
     this.visibleNodes = [];
     if (this.root) {
       // Root is always visible and expanded
       this.root.expanded = true;
-      this.addVisibleNodes(this.root, true);
+      
+      // Use a non-recursive approach to avoid stack overflow for large directories
+      const stack: [DirectoryNode, boolean][] = [[this.root, true]];
+      
+      while (stack.length > 0) {
+        const [node, isVisible] = stack.pop()!;
+        
+        if (isVisible) {
+          this.visibleNodes.push(node);
+        }
+        
+        if (node.isDirectory && node.expanded && isVisible) {
+          // Special handling for directories we're ignoring
+          const isIgnoredDir = this.ignoreDirectories.includes(node.name);
+          
+          if (isIgnoredDir && node.children.length === 0) {
+            // For ignored directories that haven't been expanded yet
+            // Add a placeholder node to show it can be expanded
+            const placeholder = new DirectoryNode(
+              join(node.path, "..."), 
+              `... (large directory, ${node.name})`, 
+              true
+            );
+            this.visibleNodes.push(placeholder);
+            continue;
+          }
+          
+          // Add children in reverse order so they appear in correct order when popped
+          for (let i = node.children.length - 1; i >= 0; i--) {
+            stack.push([node.children[i], true]);
+          }
+        }
+      }
     }
     
     // Try to find the previous node in the new list
     if (currentNodePath) {
       const newIndex = this.visibleNodes.findIndex(node => node.path === currentNodePath);
-      
-      if (this.debug) {
-        console.log(`DEBUG: New index of node ${currentNodePath}: ${newIndex}`);
-        console.log(`DEBUG: New visible nodes: ${this.visibleNodes.map(n => n.path).join(', ')}`);
-      }
       
       if (newIndex !== -1) {
         this.cursorPosition = newIndex;
@@ -163,26 +234,9 @@ class InteractiveDirectoryTree {
     } else if (this.cursorPosition >= this.visibleNodes.length) {
       this.cursorPosition = this.visibleNodes.length - 1;
     }
-    
-    if (this.debug) {
-      console.log(`DEBUG: Final cursor after update: ${this.cursorPosition}`);
-    }
   }
 
-  // Helper method to build visible nodes list
-  addVisibleNodes(node: DirectoryNode, isVisible: boolean): void {
-    if (isVisible) {
-      this.visibleNodes.push(node);
-    }
-    
-    if (node.isDirectory && node.expanded && isVisible) {
-      for (const child of node.children) {
-        this.addVisibleNodes(child, true);
-      }
-    }
-  }
-
-  // Render the tree in the console
+  // Render the tree in the console - with efficiency improvements
   render(): void {
     console.clear();
     console.log('\x1b[1m\x1b[36mInteractive Directory Explorer\x1b[0m');
@@ -201,50 +255,10 @@ class InteractiveDirectoryTree {
       console.log('   \x1b[33m↑ ... (more entries) ...\x1b[0m');
     }
     
-    // Only render nodes within the visible area
+    // Only render nodes within the visible area - this is the key optimization
     for (let i = startIdx; i < endIdx; i++) {
       const node = this.visibleNodes[i];
-      
-      // Calculate path from root to current node
-      const pathToNode: string[] = [];
-      let currentNode = node;
-      let parent = null;
-      
-      // Find parent node by path comparison
-      for (const [path, possibleParent] of this.nodeMap.entries()) {
-        if (currentNode.path.startsWith(path + '/') && path.length > (parent?.path.length || 0)) {
-          parent = possibleParent;
-        }
-      }
-      
-      // Determine indentation depth and branch position
-      const depth = (node.path.match(/\//g) || []).length - (this.root?.path.match(/\//g) || []).length;
-      let prefix = '';
-      for (let d = 0; d < depth; d++) {
-        prefix += '    '; // Simple indentation for each level
-      }
-      
-      // Mark current node with cursor
-      const isCurrent = i === this.cursorPosition;
-      const indicator = isCurrent ? '\x1b[7m' : ''; // Inverted colors for cursor
-      
-      // Directory color
-      const dirColor = node.isDirectory ? '\x1b[36m' : ''; // Cyan color for directories
-      
-      const reset = '\x1b[0m'; // Reset all formatting
-      
-      // Checkbox status and folder status
-      let statusSymbol = '';
-      if (node.isDirectory) {
-        statusSymbol = node.expanded ? SYMBOLS.EXPANDED : SYMBOLS.COLLAPSED;
-      }
-      const checkSymbol = node.selected ? SYMBOLS.SELECTED : SYMBOLS.UNSELECTED;
-      
-      // Symbol for branching
-      const branchSymbol = (i === endIdx - 1 || i === this.visibleNodes.length - 1) ? 
-        SYMBOLS.LAST_BRANCH : SYMBOLS.BRANCH;
-      
-      console.log(`${indicator}${prefix}${branchSymbol}${checkSymbol} ${statusSymbol} ${dirColor}${node.name}${reset}`);
+      this.renderVisibleNode(node, i);
     }
     
     // Show a "scroll down" indicator if there are more entries
@@ -262,20 +276,18 @@ class InteractiveDirectoryTree {
       console.log(`DEBUG INFO: Visible range: ${startIdx}-${endIdx-1} (${endIdx-startIdx} entries)`);
     }
   }
-
-  // Render node with proper indentation and symbols
-  renderNode(node: DirectoryNode, prefix: string, isLast: boolean, isRoot = false): void {
-    let line = prefix;
-    
-    if (!isRoot) {
-      line += isLast ? SYMBOLS.LAST_BRANCH : SYMBOLS.BRANCH;
+  
+  // Efficient rendering of a single visible node
+  renderVisibleNode(node: DirectoryNode, index: number): void {
+    // Calculate path depth
+    const depth = (node.path.match(/\//g) || []).length - (this.root?.path.match(/\//g) || []).length;
+    let prefix = '';
+    for (let d = 0; d < depth; d++) {
+      prefix += '    '; // Simple indentation for each level
     }
     
-    // Find the current index of this node in the visible list
-    const nodeIndex = this.visibleNodes.findIndex(n => n.path === node.path);
-    const isCurrent = nodeIndex === this.cursorPosition;
-    
     // Mark current node with cursor
+    const isCurrent = index === this.cursorPosition;
     const indicator = isCurrent ? '\x1b[7m' : ''; // Inverted colors for cursor
     
     // Directory color
@@ -288,53 +300,180 @@ class InteractiveDirectoryTree {
     if (node.isDirectory) {
       statusSymbol = node.expanded ? SYMBOLS.EXPANDED : SYMBOLS.COLLAPSED;
     }
-    const checkSymbol = node.selected ? SYMBOLS.SELECTED : SYMBOLS.UNSELECTED;
     
-    console.log(`${indicator}${line}${checkSymbol} ${statusSymbol} ${dirColor}${node.name}${reset}`);
-    
-    if (node.isDirectory && node.expanded) {
-      const childrenCount = node.children.length;
-      
-      for (let i = 0; i < childrenCount; i++) {
-        const child = node.children[i];
-        const isChildLast = i === childrenCount - 1;
-        const newPrefix = prefix + (isLast ? SYMBOLS.INDENT_EMPTY : SYMBOLS.INDENT);
-        
-        this.renderNode(child, newPrefix, isChildLast);
-      }
+    // Selection status with partial selection support
+    let checkSymbol;
+    if (node.selected) {
+      checkSymbol = SYMBOLS.SELECTED;
+    } else if (node.partiallySelected) {
+      // Use dim gray color for partial selection
+      //checkSymbol = '\x1b[2m' + SYMBOLS.PARTIAL + '\x1b[0m';
+      checkSymbol = SYMBOLS.PARTIAL;
+    } else { 
+      checkSymbol = SYMBOLS.UNSELECTED;
     }
+    
+    // Symbol for branching
+    const branchSymbol = SYMBOLS.BRANCH;
+    
+    // Render the node
+    console.log(`${indicator}${prefix}${branchSymbol}${checkSymbol} ${statusSymbol} ${dirColor}${node.name}${reset}`);
   }
 
-  // Expand/collapse directory
+  // Expand/collapse directory - with special handling for large directories
   toggleExpand(): void {
     const currentNode = this.visibleNodes[this.cursorPosition];
-    if (currentNode && currentNode.isDirectory) {
-      currentNode.expanded = !currentNode.expanded;
+    if (!currentNode || !currentNode.isDirectory) return;
+    
+    // Special handling for ignored directories
+    if (this.ignoreDirectories.includes(currentNode.name) && currentNode.children.length === 0) {
+      // First expansion of an ignored directory - load its immediate children
+      this.loadLargeDirectoryContents(currentNode);
+      return;
+    }
+    
+    // Normal expansion/collapse
+    currentNode.expanded = !currentNode.expanded;
+    this.updateVisibleNodes();
+  }
+  
+  // Load contents of a large directory that was previously ignored
+  async loadLargeDirectoryContents(node: DirectoryNode): Promise<void> {
+    console.clear();
+    console.log(`\x1b[33mLoading contents of large directory: ${node.path}\x1b[0m`);
+    console.log(`\x1b[33mThis may take a moment...\x1b[0m`);
+    
+    try {
+      const entries = await readdir(node.path);
+      
+      // Just load the direct children, don't recurse
+      const sorted = await Promise.all(entries.map(async entry => {
+        const fullPath = join(node.path, entry);
+        try {
+          const stats = await stat(fullPath);
+          return { 
+            name: entry, 
+            path: fullPath, 
+            isDirectory: stats.isDirectory() 
+          };
+        } catch (error) {
+          return null; // Skip entries with errors
+        }
+      }));
+      
+      // Filter out null entries and sort
+      const validEntries = sorted.filter(entry => entry !== null) as {
+        name: string;
+        path: string;
+        isDirectory: boolean;
+      }[];
+      
+      validEntries.sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      
+      // Create child nodes for immediate children only
+      for (const entry of validEntries) {
+        const childNode = new DirectoryNode(entry.path, entry.name, entry.isDirectory);
+        // Mark directories as having children without scanning them
+        if (entry.isDirectory) {
+          childNode.childrenCount = 1; // Placeholder, we don't know yet
+        }
+        node.children.push(childNode);
+        this.nodeMap.set(entry.path, childNode);
+      }
+      
+      // Now expand the node
+      node.expanded = true;
       this.updateVisibleNodes();
+      this.render();
+      
+    } catch (error) {
+      const err = error as Error;
+      console.error(`Error loading directory ${node.path}:`, err.message);
+      // Brief pause to show the error
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      this.render();
     }
   }
 
   // Select/deselect node
   toggleSelect(): void {
     const currentNode = this.visibleNodes[this.cursorPosition];
-    if (currentNode) {
-      currentNode.selected = !currentNode.selected;
-      
-      // If a directory is selected, also select all subdirectories
-      if (currentNode.isDirectory) {
-        this.setSelectionRecursive(currentNode, currentNode.selected);
-      }
+    if (!currentNode) return;
+    
+    // Toggle selection
+    const newSelectionState = !currentNode.selected;
+    currentNode.selected = newSelectionState;
+    currentNode.partiallySelected = false; // Clear partial state
+    
+    // If a directory is selected, also select all subdirectories
+    if (currentNode.isDirectory) {
+      this.setSelectionRecursive(currentNode, newSelectionState);
     }
+    
+    // Update parent directories' selection state
+    this.updateParentSelectionStates(currentNode);
   }
 
   // Recursively set selection
   setSelectionRecursive(node: DirectoryNode, selected: boolean): void {
     node.selected = selected;
+    node.partiallySelected = false; // Clear partial selection state
     
     if (node.isDirectory) {
       for (const child of node.children) {
         this.setSelectionRecursive(child, selected);
       }
+    }
+  }
+  
+  // Update parent directories' selection states
+  updateParentSelectionStates(node: DirectoryNode): void {
+    // Find the parent node
+    let parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
+    let parent = this.nodeMap.get(parentPath);
+    
+    while (parent) {
+      this.updateDirectorySelectionState(parent);
+      
+      // Move up to the next parent
+      parentPath = parent.path.substring(0, parent.path.lastIndexOf('/'));
+      parent = this.nodeMap.get(parentPath);
+    }
+  }
+  
+  // Update a directory's selection state based on its children
+  updateDirectorySelectionState(dir: DirectoryNode): void {
+    if (!dir.isDirectory || dir.children.length === 0) return;
+    
+    let allSelected = true;
+    let anySelected = false;
+    
+    for (const child of dir.children) {
+      if (child.selected || child.partiallySelected) {
+        anySelected = true;
+      }
+      
+      if (!child.selected) {
+        allSelected = false;
+      }
+    }
+    
+    if (allSelected) {
+      // All children are selected
+      dir.selected = true;
+      dir.partiallySelected = false;
+    } else if (anySelected) {
+      // Some but not all children are selected
+      dir.selected = false;
+      dir.partiallySelected = true;
+    } else {
+      // No children are selected
+      dir.selected = false;
+      dir.partiallySelected = false;
     }
   }
 
@@ -528,7 +667,7 @@ class InteractiveDirectoryTree {
         } catch (error) {
           const err = error as Error;
           console.clear();
-          console.log('\x1b[31m\nERROR reading ${file}: ${err.message}\n\x1b[0m');
+          console.log(`\x1b[31m\nERROR reading ${file}: ${err.message}\n\x1b[0m`);
           console.log('\n\x1b[33mPress any key to continue...\x1b[0m');
           await this.waitForKeyPress();
         }
@@ -712,6 +851,7 @@ class InteractiveDirectoryTree {
       this.render();
     });
   }
+  
   // Check if file is binary
   isBinaryFile(filePath: string): boolean {
     try {
@@ -753,7 +893,7 @@ class InteractiveDirectoryTree {
       // If we can't read the file, assume it's not binary to be safe
       return false;
     }
-  }// directory-tree-viewer.ts  
+  }
 }
 
 // Main function

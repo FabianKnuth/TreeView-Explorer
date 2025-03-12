@@ -10,6 +10,7 @@ interface Symbols {
     COLLAPSED: string;
     SELECTED: string;
     UNSELECTED: string;
+    PARTIAL:string;
   }
   
   // Data structure for a directory node in the tree
