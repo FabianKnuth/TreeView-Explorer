@@ -16,8 +16,8 @@ else
 fi
 
 # Download and run
-curl -L "$DOWNLOAD_URL" -o TreeView-Explorer
-chmod +x TreeView-Explorer
+curl -L "$DOWNLOAD_URL" -o dtv
+chmod +x dtv
 ./dtv "$@"
 
 # Clean up
