@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "start": "bun directory-tree-viewer.ts"
+  },
   "dependencies": {
     "chalk": "^5.4.1",
     "enquirer": "^2.4.1",

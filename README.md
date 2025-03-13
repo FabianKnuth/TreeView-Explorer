@@ -17,6 +17,17 @@ A powerful terminal-based file explorer with directory navigation, file selectio
 ## Installation
 
 ```bash
+# Install with curl (Linux)
+curl -fsSL https://raw.githubusercontent.com/aknuth/TreeView-Explorer/main/install.sh | bash
+```
+
+**Note:** Currently, no macOS binary is available as it hasn't been tested on macOS. However, the application works well in Windows Subsystem for Linux (WSL). If you're on Windows, you can install and run it through WSL.
+
+### Manual Installation
+
+If you prefer to build from source:
+
+```bash
 # Clone the repository
 git clone https://github.com/aknuth/TreeView-Explorer.git
 cd TreeView-Explorer
@@ -25,6 +36,9 @@ cd TreeView-Explorer
 npm install
 # or if using Bun
 bun install
+
+# Run the application
+bun start
 ```
 
 ## Usage
