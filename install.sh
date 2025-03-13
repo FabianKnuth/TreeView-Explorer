@@ -42,4 +42,4 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   fi
 fi
 
-echo "Directory Explorer installed successfully! Run 'directory-explorer' to start."
+echo "Directory Explorer installed successfully! Run 'dtv' or 'dtv /path/to/directory' to start."
