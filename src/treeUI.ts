@@ -77,7 +77,7 @@ export class TreeUI {
       process.exit(0);
     });
 
-    this.tree.key('enter', async () => {
+    this.tree.key(['enter', 'l'], async () => {
       const selectedIndex = this.tree.selected;
       const node = this.nodesByRow.get(selectedIndex);
 
@@ -88,7 +88,7 @@ export class TreeUI {
       }
     });
 
-    this.tree.key('space', () => {
+    this.tree.key(['space'], () => {
       const selectedIndex = this.tree.selected;
       const node = this.nodesByRow.get(selectedIndex);
 

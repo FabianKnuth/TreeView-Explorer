@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { OutputSymbols } from './constants';
 
 export class FileExport {
   private selectedPaths: String[];
@@ -27,11 +28,11 @@ export class FileExport {
   private printSingleFileContent(path: string) {
     try {
       const data = fs.readFileSync(path, 'utf8');
-      console.log('==========');
+      console.log(OutputSymbols.OBOVE_PATH);
       console.log(path);
-      console.log('==========');
+      console.log(OutputSymbols.BELOW_PATH);
       console.log(data);
-      console.log('');
+      console.log(OutputSymbols.BELOW_CONTENT);
     } catch (err) {
       console.error(err);
     }
