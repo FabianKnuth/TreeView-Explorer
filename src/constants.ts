@@ -16,11 +16,12 @@ export const OutputSymbols = {
   BELOW_CONTENT: '',
 };
 
-const IGNORE_DIRS = [
+export const IGNORE_DIRS = [
   'node_modules',
   '.git',
   'dist',
   'build',
   '.next',
   '.cache',
+  '.vscode',
 ];
