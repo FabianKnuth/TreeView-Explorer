@@ -61,7 +61,7 @@ export class TreeUI {
       width: '100%',
       height: 1,
       content:
-        ' Use arrow keys to navigate, Enter to expand/collapse, Esc to exit',
+        ' Use arrow keys to navigate, Enter to expand/collapse, space to select, Esc or q to exit',
       style: {
         bg: 'blue',
         fg: 'white',
@@ -140,14 +140,48 @@ export class TreeUI {
   }
 
   private selectNode(node: DirectoryTreeNode): void {
-    if (!node.selected) {
-      this.fileExport.addFile(node.path);
+    if (!node) return;
+
+    const isSelecting = node.selected === SelectState.None;
+
+    const files = this.collectFilesRecursively(node);
+
+    if (isSelecting) {
+      for (const file of files) this.fileExport.addFile(file);
+      node.selected = SelectState.Full;
     } else {
-      this.fileExport.removeFile(node.path);
+      for (const file of files) this.fileExport.removeFile(file);
+      node.selected = SelectState.None;
     }
-    node.toggleSelect();
+
+    this.toggleSelectRecursive(
+      node,
+      isSelecting ? SelectState.Full : SelectState.None
+    );
+
     this.renderTree();
     this.screen.render();
+  }
+
+  private collectFilesRecursively(node: DirectoryTreeNode): string[] {
+    const files: string[] = [];
+
+    if (!node.isDirectory) {
+      files.push(node.path);
+    } else {
+      for (const child of node.children) {
+        files.push(...this.collectFilesRecursively(child));
+      }
+    }
+
+    return files;
+  }
+
+  private toggleSelectRecursive(node: DirectoryTreeNode, state: SelectState) {
+    node.selected = state;
+    for (const child of node.children) {
+      this.toggleSelectRecursive(child, state);
+    }
   }
 
   run(): void {
