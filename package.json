@@ -1,8 +1,9 @@
 {
   "scripts": {
-    "start": "bun directory-tree-viewer.ts"
+    "start": "bun src/main.ts"
   },
   "dependencies": {
+    "blessed": "^0.1.81",
     "chalk": "^5.4.1",
     "enquirer": "^2.4.1",
     "inquirer": "^12.4.2",
