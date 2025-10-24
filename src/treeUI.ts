@@ -61,7 +61,7 @@ export class TreeUI {
       width: '100%',
       height: 1,
       content:
-        ' Use arrow keys to navigate, Enter to expand/collapse, space to select, Esc or q to exit',
+        'Use ↑/↓ or j/k to navigate, Enter or l to expand, h to go up, Space to select, and Esc or q to exit.',
       style: {
         bg: 'blue',
         fg: 'white',
@@ -86,6 +86,30 @@ export class TreeUI {
         this.renderTree();
         this.screen.render();
       }
+    });
+
+    this.tree.key('h', async () => {
+      const selectedIndex = this.tree.selected;
+      const node = this.nodesByRow.get(selectedIndex);
+
+      if (!node?.parent) return;
+
+      const parent = node.parent;
+
+      if (parent.isDirectory) {
+        await this.toggleNode(parent);
+      }
+
+      const parentRow = [...this.nodesByRow.entries()].find(
+        ([_, n]) => n === parent
+      )?.[0];
+
+      if (parentRow !== undefined) {
+        this.tree.select(parentRow);
+      }
+
+      this.renderTree();
+      this.screen.render();
     });
 
     this.tree.key(['space'], () => {
