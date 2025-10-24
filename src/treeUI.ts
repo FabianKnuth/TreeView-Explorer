@@ -159,6 +159,7 @@ export class TreeUI {
       isSelecting ? SelectState.Full : SelectState.None
     );
 
+    this.updateParentSelectionState(node);
     this.renderTree();
     this.screen.render();
   }
@@ -182,6 +183,29 @@ export class TreeUI {
     for (const child of node.children) {
       this.toggleSelectRecursive(child, state);
     }
+  }
+
+  private updateParentSelectionState(node: DirectoryTreeNode | null): void {
+    if (!node || !node.parent) return; // Stop at root
+
+    const parent = node.parent;
+    const childStates = parent.children.map((child) => child.selected);
+
+    // If all children are full
+    if (childStates.every((s) => s === SelectState.Full)) {
+      parent.selected = SelectState.Full;
+    }
+    // If all children are none
+    else if (childStates.every((s) => s === SelectState.None)) {
+      parent.selected = SelectState.None;
+    }
+    // Otherwise it's mixed
+    else {
+      parent.selected = SelectState.Partial;
+    }
+
+    // Recursively update higher levels
+    this.updateParentSelectionState(parent);
   }
 
   run(): void {
